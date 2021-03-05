@@ -12,7 +12,9 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/client"
 	"github.com/aws/aws-sdk-go/aws/credentials"
+	"github.com/aws/aws-sdk-go/aws/credentials/ec2rolecreds"
 	"github.com/aws/aws-sdk-go/aws/credentials/stscreds"
+	"github.com/aws/aws-sdk-go/aws/ec2metadata"
 	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/cloudwatch"
@@ -135,6 +137,8 @@ func (e *cloudWatchExecutor) newSession(region string) (*session.Session, error)
 		cfgs = append(cfgs, &aws.Config{Endpoint: aws.String(dsInfo.Endpoint)})
 	}
 
+	var err error
+	var sess *session.Session
 	switch dsInfo.AuthType {
 	case authTypeSharedCreds:
 		plog.Debug("Authenticating towards AWS with shared credentials", "profile", dsInfo.Profile,
@@ -149,10 +153,19 @@ func (e *cloudWatchExecutor) newSession(region string) (*session.Session, error)
 		})
 	case authTypeDefault:
 		plog.Debug("Authenticating towards AWS with default SDK method", "region", dsInfo.Region)
+	case authTypeEC2IAMRole:
+		plog.Debug("Authenticating towards AWS with IAM Role", "region", dsInfo.Region)
+		sess, err = newSession(cfgs...)
+		if err != nil {
+			return nil, err
+		}
+		cfgs = append(cfgs, &aws.Config{
+			Credentials: credentials.NewCredentials(&ec2rolecreds.EC2RoleProvider{Client: ec2metadata.New(sess), ExpiryWindow: stscreds.DefaultDuration}),
+		})
 	default:
 		panic(fmt.Sprintf("Unrecognized authType: %d", dsInfo.AuthType))
 	}
-	sess, err := newSession(cfgs...)
+	sess, err = newSession(cfgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -395,6 +408,7 @@ const (
 	authTypeDefault authType = iota
 	authTypeSharedCreds
 	authTypeKeys
+	authTypeEC2IAMRole
 )
 
 func (at authType) String() string {
@@ -405,6 +419,8 @@ func (at authType) String() string {
 		return "sharedCreds"
 	case authTypeKeys:
 		return "keys"
+	case authTypeEC2IAMRole:
+		return "ec2_IAM_role"
 	default:
 		panic(fmt.Sprintf("Unrecognized auth type %d", at))
 	}
@@ -431,6 +447,8 @@ func (e *cloudWatchExecutor) getDSInfo(region string) *datasourceInfo {
 		at = authTypeKeys
 	case "default":
 		at = authTypeDefault
+	case "ec2_IAM_role":
+		at = authTypeEC2IAMRole
 	case "arn":
 		at = authTypeDefault
 		plog.Warn("Authentication type \"arn\" is deprecated, falling back to default")
