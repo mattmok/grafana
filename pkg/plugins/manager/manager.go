@@ -27,13 +27,11 @@ import (
 )
 
 var (
-	DataSources  map[string]*plugins.DataSourcePlugin
 	Panels       map[string]*plugins.PanelPlugin
 	StaticRoutes []*plugins.PluginStaticRoute
 	Apps         map[string]*plugins.AppPlugin
 	Plugins      map[string]*plugins.PluginBase
 	PluginTypes  map[string]interface{}
-	Renderer     *plugins.RendererPlugin
 
 	plog log.Logger
 )
@@ -63,17 +61,21 @@ type PluginManager struct {
 	GrafanaLatestVersion          string
 	GrafanaHasUpdate              bool
 	pluginScanningErrors          map[string]plugins.PluginError
+
+	renderer    *plugins.RendererPlugin
+	dataSources map[string]*plugins.DataSourcePlugin
 }
 
 func init() {
-	registry.RegisterService(&PluginManager{})
+	registry.RegisterService(&PluginManager{
+		dataSources: map[string]*plugins.DataSourcePlugin{},
+	})
 }
 
 func (pm *PluginManager) Init() error {
 	pm.log = log.New("plugins")
 	plog = log.New("plugins")
 
-	DataSources = map[string]*plugins.DataSourcePlugin{}
 	StaticRoutes = []*plugins.PluginStaticRoute{}
 	Panels = map[string]*plugins.PanelPlugin{}
 	Apps = map[string]*plugins.AppPlugin{}
@@ -144,8 +146,8 @@ func (pm *PluginManager) Init() error {
 		StaticRoutes = append(StaticRoutes, staticRoutes...)
 	}
 
-	if Renderer != nil {
-		staticRoutes := Renderer.InitFrontendPlugin()
+	if pm.renderer != nil {
+		staticRoutes := pm.renderer.InitFrontendPlugin()
 		StaticRoutes = append(StaticRoutes, staticRoutes...)
 	}
 
@@ -176,6 +178,14 @@ func (pm *PluginManager) Run(ctx context.Context) error {
 	}
 
 	return ctx.Err()
+}
+
+func (pm *PluginManager) Renderer() *RendererPlugin {
+	return pm.renderer
+}
+
+func (pm *PluginManager) GetDataSourcePlugin(id string) *DataSourcePlugin {
+	return pm.datasources[id]
 }
 
 // scanPluginPaths scans configured plugin paths.
@@ -600,14 +610,14 @@ func collectPluginFilesWithin(rootDir string) ([]string, error) {
 }
 
 // GetDataPlugin gets a DataPlugin with a certain name. If none is found, nil is returned.
-func (pm *PluginManager) GetDataPlugin(pluginID string) plugins.DataPlugin {
-	if p, exists := DataSources[pluginID]; exists && p.CanHandleDataQueries() {
+func (pm *PluginManager) GetDataPlugin(id string) plugins.DataPlugin {
+	if p, exists := DataSources[id]; exists && p.CanHandleDataQueries() {
 		return p
 	}
 
 	// XXX: Might other plugins implement DataPlugin?
 
-	p := pm.BackendPluginManager.GetDataPlugin(pluginID)
+	p := pm.BackendPluginManager.GetDataPlugin(id)
 	if p != nil {
 		return p.(plugins.DataPlugin)
 	}
